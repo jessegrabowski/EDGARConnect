@@ -15,6 +15,7 @@ from collections import Counter
 from EDGARConnectExceptions import SECServerClosedError
 from utilities import progress_bar
 
+
 class EDGARConnect():
 
     def __init__(self, edgar_path, edgar_url='https://www.sec.gov/Archives', retry_kwargs=None):
@@ -105,7 +106,9 @@ class EDGARConnect():
     def download_master_indexes(self, update_range=2, update_all=False):
 
         '''
-        Hit up the SEC EDGAR database and grab their master list of filing URLS.
+        Hit up the SEC EDGAR database and grab their master list of filing URLS. Run this after you run
+        configure_downloader() so it knows which master indexes to grab.
+
         Arguments
         ------------------------
         update_range: int, default = 2
@@ -116,6 +119,8 @@ class EDGARConnect():
             If true, the program will overwrite everything stored locally with what is on the SEC sever.
             This is equivilant to setting update_rate to some large number.
         '''
+        self._check_config()
+
         start_date = self.start_date
         end_date = self.end_date
         n_quarters = (end_date - start_date).n + 1
@@ -136,6 +141,7 @@ class EDGARConnect():
             alpha = 1 / (i + 1)
             mean_time = alpha * elapsed + (1 - alpha) * mean_time
             progress_bar(i, n_quarters, mean_time, f'Downloading {i} / {n_quarters} Master Lists')
+        progress_bar(n_quarters, n_quarters, mean_time, f'Downloading {n_quarters} / {n_quarters} Master Lists')
 
     def configure_downloader(self, target_forms, start_date='01-01-1994', end_date=None):
         '''
@@ -199,6 +205,10 @@ class EDGARConnect():
         self._check_config()
         self._time_check(ignore_time_guidelines)
 
+        start_date = self.start_date
+        end_date = self.end_date
+        n_quarters = (end_date - start_date).n + 1
+        
         print(f'Gathering URLS for the requested forms...')
         required_files = [f'{(start_date + i).year}Q{(start_date + i).quarter}.txt' for i in range(n_quarters)]
 
@@ -240,6 +250,7 @@ class EDGARConnect():
                         alpha = 1 / (j + 1)
                         mean_time = alpha * elapsed + (1 - alpha) * mean_time
                         progress_bar(j, n_iter, mean_time, f'Downloading {start_date + i} {form} {j} / {n_iter}')
+                    progress_bar(n_iter, n_iter, mean_time, f'Downloading {start_date + i} {form} {n_iter} / {n_iter}')
                 print('')
 
     def show_available_forms(self):
@@ -247,7 +258,6 @@ class EDGARConnect():
         print('Available forms:')
         for key, value in self.forms.items():
             print(f'{key} -> {value}')
-
 
     def show_download_plan(self):
         self._check_config()
@@ -275,7 +285,7 @@ class EDGARConnect():
             print(f'\tNumber of {form}s: {form_counter[form]}')
             form_sum += form_counter[form]
 
-        print('='*30)
+        print('=' * 30)
         print(f'\tTotal files: {form_sum}')
 
         m, s = np.divmod(form_sum, 60)
@@ -285,11 +295,9 @@ class EDGARConnect():
         print(f'Estimated download time, assuming 1s per file: {d} Days, {h} hours, {m} minutes, {s} seconds')
         print(f'Estimated drive space, assuming 150KB per filing: {form_sum * 150 * 1e-6:0.2f}GB')
 
-
-
     def _check_config(self):
-            if not self._configured:
-                raise ValueError("First define scrape parameters using the build_payload() method")
+        if not self._configured:
+            raise ValueError("First define scrape parameters using the build_payload() method")
 
     def _check_for_required_directories(self):
         self.master_path = os.path.join(self.edgar_path, 'master_indexes')
@@ -381,7 +389,7 @@ class EDGARConnect():
     def _check_time_is_SEC_recommended(self):
         sec_server_open = 21
         sec_server_close = 6
-        utc_dt = pytz.utc.localize(dt.utcnow())
+        utc_dt = pytz.utc.localize(dt.datetime.utcnow())
         est_timezone = pytz.timezone('US/Eastern')
         est_dt = est_timezone.normalize(utc_dt.astimezone(est_timezone))
 
