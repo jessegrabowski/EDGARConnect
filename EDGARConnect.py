@@ -16,37 +16,37 @@ from EDGARConnectExceptions import SECServerClosedError
 from utilities import progress_bar
 
 
-class EDGARConnect():
+class EDGARConnect:
 
     def __init__(self, edgar_path, edgar_url='https://www.sec.gov/Archives', retry_kwargs=None):
+        """
+        A class for downloading SEC filings from the EDGAR database.
 
-        '''
-        A class for downloading SEC filings from the EDGAR database. 
-        
         PARAMS
         ----------------------------
-        edgar_path: str or path-like, (required) 
+        edgar_path: str or path-like, (required)
             A path where EDGARConnect will write all its output
         edgar_url: str, default: https://www.sec.gov/Archives
-            The base URL of the SEC EDGAR database. There probably shouldn't be a need to ever change this, but it's here
-            for future-proofing?
+            The base URL of the SEC EDGAR database. There probably shouldn't be a need to ever change this, but it's
+            here for future-proofing?
         retry_kwargs: dict, default: None, see below
-            A dictionary of keyword arguments to pass to requests.packages.urllib3.util.retry.Retry. These are important, 
-            because the SEC will throw 403 forbidden errors if we send too many requests too quickly. If this argument is
-            None, the following settings will be loaded by default:
+            A dictionary of keyword arguments to pass to requests.packages.urllib3.util.retry.Retry. These are
+            important, because the SEC will throw 403 forbidden errors if we send too many requests too quickly. If
+            this argument is None, the following settings will be loaded by default:
                 total = 8 ## Maximum retries
-                backoff_factor = 1 ## The program will retry after {backoff factor} * (2 ** ({number of total retries} - 1))
-                    seconds. Not recommended to set this to 0, but you could try something lower than 1. Make it larger than
-                    1 or increase the maximum retries if you're getting blocked.
+                backoff_factor = 1 ## The program will retry after
+                    {backoff factor} * (2 ** ({number of total retries} - 1))
+                    seconds. Not recommended to set this to 0, but you could try something lower than 1. Make it
+                    larger than 1 or increase the maximum retries if you're getting blocked.
                 status_forcelist = [403, 429, 500, 502, 503, 504] ## response codes to retry on. Importantly, EDGAR uses
                     code 403 when rate-limiting scripts, so that should always be in this list.
-                allowed_methods = ["HEAD", "GET", "OPTIONS"]  ## http methods to retry on. We're basically only doing GETs,
-                    to be honest I don't know why I put the others here (I copied a tutorial a long time ago?)
-        
+                allowed_methods = ["HEAD", "GET", "OPTIONS"]  ## http methods to retry on. We're basically only doing
+                GETs, to be honest I don't know why I put the others here (I copied a tutorial a long time ago?)
+
         RETURNS
         ----------------------------------
         EDGARConnect will create and fill the following directory structure within edgar_path:
-        
+
         edgar_path
             |
             +---master_indexes
@@ -61,19 +61,19 @@ class EDGARConnect():
             |   |   +---{year}{quarter}
             |   |   |   |
             |   |   |   +---{report_file_name}.txt
-            |   |   |   
+            |   |   |
 
         master_indexes is a collection of pipe-delimited ("|") tables with the following 5 columns:
-            CIK, Company_Name, Form_type, Date_filed , Filename. 
+            CIK, Company_Name, Form_type, Date_filed , Filename.
             Importantly, Filename is a URL pointing to the report on the EDGAR database.
-            
-            The master_indexes folder must be constructed using the download_master_indexes() method before EDGARConnect 
+
+            The master_indexes folder must be constructed using the download_master_indexes() method before EDGARConnect
             can batch-download filings. Downloading master_indexes requires between 1 and 2 GB of disk space.
-            
-        Once master_indexes is downloaded, individual forms over user-specified dates can be downloaded using the 
-        download_requested_filings() method. Note that download settings must first be set using the configure_downloader()
-        method.
-        '''
+
+        Once master_indexes is downloaded, individual forms over user-specified dates can be downloaded using the
+        download_requested_filings() method. Note that download settings must first be set using the
+        configure_downloader() method.
+        """
 
         if retry_kwargs is None:
             retry_kwargs = dict(total=8, backoff_factor=1,
@@ -101,11 +101,13 @@ class EDGARConnect():
         for key in self.forms.keys():
             self.forms['f_10x'].extend(self.forms[key])
 
+        self.start_date = None
+        self.end_date = None
+        self.target_forms = None
         self._configured = False
 
     def download_master_indexes(self, update_range=2, update_all=False):
-
-        '''
+        """
         Hit up the SEC EDGAR database and grab their master list of filing URLS. Run this after you run
         configure_downloader() so it knows which master indexes to grab.
 
@@ -113,12 +115,13 @@ class EDGARConnect():
         ------------------------
         update_range: int, default = 2
             Overwrite the update_range most recent local files with those from the SEC sever.
-            Note that it starts with 0, so update_range = 2 will update the current quarter and the last 
+            Note that it starts with 0, so update_range = 2 will update the current quarter and the last
             quarter.
         update_all: bool, default = False
             If true, the program will overwrite everything stored locally with what is on the SEC sever.
-            This is equivilant to setting update_rate to some large number.
-        '''
+            This is equivalent to setting update_rate to some large number.
+        """
+
         self._check_config()
 
         start_date = self.start_date
@@ -144,27 +147,27 @@ class EDGARConnect():
         progress_bar(n_quarters, n_quarters, mean_time, f'Downloading {n_quarters} / {n_quarters} Master Lists')
 
     def configure_downloader(self, target_forms, start_date='01-01-1994', end_date=None):
-        '''
+        """
         Provide parameters for scraping EDGAR. This method must be run before batch downloading via the
-        download_requested_filings() method can be executed. 
-        
+        download_requested_filings() method can be executed.
+
         ***NOTE THAT WITH DEFAULT SETTINGS, EDGARCONNECT WILL DOWNLOAD ALL AVAILABLE DATA 10-X FAMILY FILINGS (INCLUDING
-        10-K, 10-Q, AND ALL ASSOCIATED AMMENDMENTS)FROM THE SEC EDGAR DATABASE. IN TOTAL, THIS REQURIES OVER
+        10-K, 10-Q, AND ALL ASSOCIATED AMENDMENTS)FROM THE SEC EDGAR DATABASE. IN TOTAL, THIS REQUIRES OVER
         100GB OF DATA. ***
-        
+
         Arguments
         -------------------------------------
         target_forms: str or iterable, default: None
             Name of the forms to be downloaded (10-K, 10-Q, etc), or a list of such form names.
             EDGARConnect has a built-in dictionary of forms that can be passed into this argument.
             To see valid keys and the associated forms, use the show_available_forms() method.
-            
+
         start_date: str or datetime object, default: '01-01-1994'
-            Date to begin scraping from. Earlist available data is 01-01-1994.
-            
+            Date to begin scraping from. Earliest available data is 01-01-1994.
+
         end_date: str or datetime object, default: None
             Date on which to end scraping. If None, it defaults to today's date.
-        '''
+        """
 
         # Check if the requested forms are keys in the forms list and grab that list if os
         if isinstance(target_forms, str):
@@ -180,27 +183,27 @@ class EDGARConnect():
             end_date = dt.datetime.today()
         self.end_date = pd.to_datetime(end_date).to_period('Q')
 
-        self._check_all_required_indexes_are_downloaded(self.start_date, self.end_date)
+        self._check_all_required_indexes_are_downloaded()
         self._configured = True
 
     def download_requested_filings(self, ignore_time_guidelines=False):
-        '''
+        """
         Method for downloading all forums meeting the requirements set in the configure_downloader() method. That method
         must be run before running this one.
-        
+
         Arguments
         -------------------------
         ignore_time_guidelines: bool, default=False
             By default, SECConnect will periodically check your system clock time to make sure you are accessing EDGAR
-            records during the times requested by the SEC (between 9PM and 6AM EST). By passing ignore_time_guidelines, 
-            you can try to do downloads outside of that time window. Recommended only if downloading a small number of 
+            records during the times requested by the SEC (between 9PM and 6AM EST). By passing ignore_time_guidelines,
+            you can try to do downloads outside of that time window. Recommended only if downloading a small number of
             filings.
-        
+
         RETURNS
         --------------------------
-        None, see the EDGARConnect.__init__() docstring for an explaination of the directory structure created during 
+        None, see the EDGARConnect.__init__() docstring for an explanation of the directory structure created during
         downloading.
-        '''
+        """
 
         self._check_config()
         self._time_check(ignore_time_guidelines)
@@ -208,7 +211,7 @@ class EDGARConnect():
         start_date = self.start_date
         end_date = self.end_date
         n_quarters = (end_date - start_date).n + 1
-        
+
         print(f'Gathering URLS for the requested forms...')
         required_files = [f'{(start_date + i).year}Q{(start_date + i).quarter}.txt' for i in range(n_quarters)]
 
@@ -227,9 +230,9 @@ class EDGARConnect():
                 target_rows = df.index[form_mask]
                 n_iter = len(target_rows)
                 if n_iter == 0:
-                    print(f'No {form} filings in {start_date + i} found, continuting...')
+                    print(f'No {form} filings in {start_date + i} found, continuing...')
                 else:
-                    print(f'Found {form_mask.sum()} {form} filings, beginning download...')
+                    print(f'Found {n_iter} {form} filings, beginning download...')
 
                 for j, idx in enumerate(target_rows):
                     row = df.loc[idx, :]
@@ -261,7 +264,7 @@ class EDGARConnect():
 
     def show_download_plan(self):
         self._check_config()
-        self._check_all_required_indexes_are_downloaded(self.start_date, self.end_date)
+        self._check_all_required_indexes_are_downloaded()
 
         forms = np.atleast_1d(self.target_forms)
         start_date = self.start_date
@@ -269,8 +272,6 @@ class EDGARConnect():
         n_quarters = (end_date - start_date).n + 1
 
         form_counter = Counter()
-
-        index_files = os.listdir(self.master_path)
         required_files = [f'{(start_date + i).year}Q{(start_date + i).quarter}.txt' for i in range(n_quarters)]
 
         for file in required_files:
@@ -306,7 +307,7 @@ class EDGARConnect():
         if not self._master_paths_configured:
             os.mkdir(self.master_path)
 
-    def _check_all_required_indexes_are_downloaded(self, start_date, end_date):
+    def _check_all_required_indexes_are_downloaded(self):
         start_date = self.start_date
         end_date = self.end_date
         n_quarters = (end_date - start_date).n + 1
@@ -354,9 +355,9 @@ class EDGARConnect():
             master_zip = self.http.get(target_url)
             master_list = ZipFile(BytesIO(master_zip.content))
             master_list = master_list.open('master.idx') \
-                              .read() \
-                              .decode('utf-8', 'ignore') \
-                              .splitlines()[11:]
+                .read() \
+                .decode('utf-8', 'ignore') \
+                .splitlines()[11:]
 
             with open(out_path, 'a') as file:
                 for line in master_list:
@@ -380,18 +381,20 @@ class EDGARConnect():
 
         return out_dir, out_path
 
-    def _check_file_dir_and_paths_exist(self, out_dir, out_path):
+    @staticmethod
+    def _check_file_dir_and_paths_exist(out_dir, out_path):
         if not os.path.isdir(out_dir):
             os.makedirs(out_dir)
 
         return os.path.isfile(out_path)
 
-    def _check_time_is_SEC_recommended(self):
+    @staticmethod
+    def _check_time_is_SEC_recommended():
         sec_server_open = 21
         sec_server_close = 6
-        utc_dt = pytz.utc.localize(dt.datetime.utcnow())
+        local_time = dt.datetime.now().astimezone()
         est_timezone = pytz.timezone('US/Eastern')
-        est_dt = est_timezone.normalize(utc_dt.astimezone(est_timezone))
+        est_dt = local_time.astimezone(est_timezone)
 
         if est_dt.hour >= sec_server_open or est_dt.hour < sec_server_close:
             return False
@@ -402,10 +405,10 @@ class EDGARConnect():
         SEC_servers_open = self._check_time_is_SEC_recommended()
 
         if not SEC_servers_open:
-            print('''SEC guidelines request batch downloads be done between 9PM and 6AM EST. If you plan to download a lot
-                     of stuff, it is strongly recommended that you wait until then to begin. If your query size is relatively
-                     small, or if it's big but you feel like ignoring this guidance from the good people at the SEC,
-                     re-run this function with the argument:
+            print('''SEC guidelines request batch downloads be done between 9PM and 6AM EST. If you plan to download
+                     a lot of stuff, it is strongly recommended that you wait until then to begin. If your query size 
+                     is relatively small, or if it's big but you feel like ignoring this guidance from the good people 
+                     at the SEC, re-run this function with the argument:
                      
                      ignore_time_guidelines = True''')
 
