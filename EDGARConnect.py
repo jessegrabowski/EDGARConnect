@@ -1,3 +1,18 @@
+import os
+import time
+import datetime as dt
+import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+import pandas as pd
+
+from zipfile import ZipFile
+from io import BytesIO
+
+import numpy as np
+import re
+import pytz
+
 class EDGARConnect():
     
     def __init__(self, edgar_path, edgar_url = 'https://www.sec.gov/Archives', retry_kwargs=None):
