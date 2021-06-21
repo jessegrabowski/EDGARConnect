@@ -346,12 +346,12 @@ class EDGARConnect:
         out_path = os.path.join(self.master_path, f'{target_year}Q{target_quarter}.txt')
         file_downloaded = True
 
-        if not os.path.isfile(out_path):
+        if not os.path.isfile(out_path) or force_redownload:
             file_downloaded = False
             with open(out_path, 'w') as file:
                 file.write('CIK|Company_Name|Form_type|Date_filed|Filename\n')
 
-        if not file_downloaded or force_redownload:
+        if not file_downloaded:
             master_zip = self.http.get(target_url)
             master_list = ZipFile(BytesIO(master_zip.content))
             master_list = master_list.open('master.idx') \
