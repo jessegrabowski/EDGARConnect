@@ -13,6 +13,10 @@ import numpy as np
 import re
 import pytz
 
+
+from EDGARConnectExceptions import SECServerClosedError
+from utilities import progress_bar
+
 class EDGARConnect():
     
     def __init__(self, edgar_path, edgar_url = 'https://www.sec.gov/Archives', retry_kwargs=None):
