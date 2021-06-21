@@ -1,3 +1,5 @@
+import numpy as np
+
 def progress_bar(current, total, mean_time, verb):
     remaining = mean_time * (total - current)
     minutes, seconds = np.divmod(remaining, 60)
