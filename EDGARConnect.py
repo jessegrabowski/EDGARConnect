@@ -99,7 +99,8 @@ class EDGARConnect:
             f_10x=[])
 
         for key in self.forms.keys():
-            self.forms['f_10x'].extend(self.forms[key])
+            if key != 'f_10x':
+                self.forms['f_10x'].extend(self.forms[key])
 
         self.start_date = None
         self.end_date = None
