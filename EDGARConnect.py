@@ -1,6 +1,6 @@
 import os
 import time
-import datetime as dt
+from datetime import datetime as dt
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
@@ -181,7 +181,7 @@ class EDGARConnect:
         self.start_date = pd.to_datetime(start_date).to_period('Q')
 
         if end_date is None:
-            end_date = dt.datetime.today()
+            end_date = dt.today()
         self.end_date = pd.to_datetime(end_date).to_period('Q')
 
         self._check_all_required_indexes_are_downloaded()
@@ -397,14 +397,11 @@ class EDGARConnect:
     def _check_time_is_SEC_recommended():
         sec_server_open = 21
         sec_server_close = 6
-        local_time = dt.datetime.now().astimezone()
+        local_time = dt.now().astimezone()
         est_timezone = pytz.timezone('US/Eastern')
         est_dt = local_time.astimezone(est_timezone)
 
-        if est_dt.hour >= sec_server_open or est_dt.hour < sec_server_close:
-            return False
-        else:
-            return True
+        return est_dt.hour >= sec_server_open or est_dt.hour < sec_server_close
 
     def _time_check(self, ignore_time_guidelines=False):
         SEC_servers_open = self._check_time_is_SEC_recommended()
