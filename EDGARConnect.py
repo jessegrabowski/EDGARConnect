@@ -229,6 +229,8 @@ class EDGARConnect:
                 form_mask = df.Form_type.str.lower() == form.lower()
                 target_rows = df.index[form_mask]
                 n_iter = len(target_rows)
+                changes_made = False
+
                 if n_iter == 0:
                     print(f'No {form} filings in {start_date + i} found, continuing...')
                 else:
@@ -241,6 +243,7 @@ class EDGARConnect:
                     file_already_downloaded = self._check_file_dir_and_paths_exist(out_dir, out_path)
 
                     if not file_already_downloaded:
+                        changes_made = True
                         start_time = time.time()
 
                         target_url = self.edgar_url + '/' + row['Filename']
@@ -253,6 +256,7 @@ class EDGARConnect:
                         alpha = 1 / (j + 1)
                         mean_time = alpha * elapsed + (1 - alpha) * mean_time
                         progress_bar(j, n_iter, mean_time, f'Downloading {start_date + i} {form} {j} / {n_iter}')
+                if changes_made:
                     progress_bar(n_iter, n_iter, mean_time, f'Downloading {start_date + i} {form} {n_iter} / {n_iter}')
                 print('')
 
