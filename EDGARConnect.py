@@ -106,6 +106,7 @@ class EDGARConnect:
         self.end_date = None
         self.target_forms = None
         self._configured = False
+        self.time_message_displayed = False
 
     def download_master_indexes(self, update_range=2, update_all=False):
         """
@@ -183,8 +184,6 @@ class EDGARConnect:
         if end_date is None:
             end_date = dt.today()
         self.end_date = pd.to_datetime(end_date).to_period('Q')
-
-        self._check_all_required_indexes_are_downloaded()
         self._configured = True
 
     def download_requested_filings(self, ignore_time_guidelines=False):
@@ -303,7 +302,7 @@ class EDGARConnect:
 
     def _check_config(self):
         if not self._configured:
-            raise ValueError("First define scrape parameters using the build_payload() method")
+            raise ValueError("First define scrape parameters using the configure_downloader() method")
 
     def _check_for_required_directories(self):
         self.master_path = os.path.join(self.edgar_path, 'master_indexes')
@@ -406,7 +405,8 @@ class EDGARConnect:
     def _time_check(self, ignore_time_guidelines=False):
         SEC_servers_open = self._check_time_is_SEC_recommended()
 
-        if not SEC_servers_open:
+
+        if not SEC_servers_open and not ignore_time_guidelines:
             print('''SEC guidelines request batch downloads be done between 9PM and 6AM EST. If you plan to download
                      a lot of stuff, it is strongly recommended that you wait until then to begin. If your query size 
                      is relatively small, or if it's big but you feel like ignoring this guidance from the good people 
@@ -414,5 +414,4 @@ class EDGARConnect:
                      
                      ignore_time_guidelines = True''')
 
-            if not ignore_time_guidelines:
-                raise SECServerClosedError()
+            raise SECServerClosedError()
