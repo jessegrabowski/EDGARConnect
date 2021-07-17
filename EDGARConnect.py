@@ -103,7 +103,7 @@ class EDGARConnect:
             self.header = header
         else:
             self.header = {'User-Agent': user_agent,
-                           'Accept-Encoding': 'gzip, deflate',
+                           'Accept-Encoding': 'gzip, deflate, br',
                            'Accept-Language': 'en-us',
                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                            'Host': "www.sec.gov"}
