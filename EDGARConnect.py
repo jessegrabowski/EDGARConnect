@@ -14,11 +14,13 @@ import pytz
 from collections import Counter
 from EDGARConnectExceptions import SECServerClosedError
 from utilities import progress_bar
+from fake_useragent import UserAgent
 
 
 class EDGARConnect:
 
-    def __init__(self, edgar_path, edgar_url='https://www.sec.gov/Archives', retry_kwargs=None):
+    def __init__(self, edgar_path, user_agent=None, edgar_url='https://www.sec.gov/Archives', retry_kwargs=None,
+                 header=None):
         """
         A class for downloading SEC filings from the EDGAR database.
 
@@ -26,6 +28,9 @@ class EDGARConnect:
         ----------------------------
         edgar_path: str or path-like, (required)
             A path where EDGARConnect will write all its output
+        User_Agent: str, default: None
+            The SEC requests that all bots provide a User_Agent of the form:
+                Sample Company Name AdminContact@<sample company domain>.com
         edgar_url: str, default: https://www.sec.gov/Archives
             The base URL of the SEC EDGAR database. There probably shouldn't be a need to ever change this, but it's
             here for future-proofing?
@@ -42,6 +47,14 @@ class EDGARConnect:
                     code 403 when rate-limiting scripts, so that should always be in this list.
                 allowed_methods = ["HEAD", "GET", "OPTIONS"]  ## http methods to retry on. We're basically only doing
                 GETs, to be honest I don't know why I put the others here (I copied a tutorial a long time ago?)
+        header: dict, default: None
+            A dictionary of header values to pass to the Requests session. By default, it takes the values suggested
+            by the SEC at https://www.sec.gov/os/accessing-edgar-data:
+                User-Agent: User_Agent, or None
+                Accept-Encoding: gzip, deflate
+                Host: www.sec.gov
+
+            If User_Agent is None, a fake User-Agent string is generated using the fake_useragent package.
 
         RETURNS
         ----------------------------------
@@ -81,6 +94,20 @@ class EDGARConnect:
                                 allowed_methods=["HEAD", "GET", "OPTIONS"])
 
         self.edgar_url = edgar_url
+
+        if user_agent is None:
+            ua = UserAgent()
+            user_agent = ua.random
+
+        if header is not None:
+            self.header = header
+        else:
+            self.header = {'User-Agent': user_agent,
+                           'Accept-Encoding': 'gzip, deflate',
+                           'Accept-Language': 'en-us',
+                           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                           'Host': "www.sec.gov"}
+
         retry_strategy = Retry(**retry_kwargs)
         self.adapter = HTTPAdapter(max_retries=retry_strategy)
         self.http = requests.Session()
@@ -247,7 +274,10 @@ class EDGARConnect:
                         start_time = time.time()
 
                         target_url = self.edgar_url + '/' + row['Filename']
-                        filing = self.http.get(target_url)
+                        referer = target_url.replace('.txt', '-index.html')
+                        self.header['Referer'] = referer
+
+                        filing = self.http.get(target_url, headers=self.header)
 
                         with open(out_path, 'w') as file:
                             file.write(filing.content.decode('utf-8', 'ignore'))
@@ -356,12 +386,12 @@ class EDGARConnect:
                 file.write('CIK|Company_Name|Form_type|Date_filed|Filename\n')
 
         if not file_downloaded:
-            master_zip = self.http.get(target_url)
+            master_zip = self.http.get(target_url, headers=self.header)
             master_list = ZipFile(BytesIO(master_zip.content))
             master_list = master_list.open('master.idx') \
-                .read() \
-                .decode('utf-8', 'ignore') \
-                .splitlines()[11:]
+                              .read() \
+                              .decode('utf-8', 'ignore') \
+                              .splitlines()[11:]
 
             with open(out_path, 'a') as file:
                 for line in master_list:
@@ -404,7 +434,6 @@ class EDGARConnect:
 
     def _time_check(self, ignore_time_guidelines=False):
         SEC_servers_open = self._check_time_is_SEC_recommended()
-
 
         if not SEC_servers_open and not ignore_time_guidelines:
             print('''SEC guidelines request batch downloads be done between 9PM and 6AM EST. If you plan to download
