@@ -155,7 +155,7 @@ class EDGARConnect:
 
         update_quarters = [end_date - i for i in range(update_range)]
 
-        progress_bar = ProgressBar(verb='Downloading', total=n_quarters)
+        progress_bar = ProgressBar(total=n_quarters, verb='Downloading')
         for i in range(n_quarters):
             progress_bar.start()
 
@@ -219,6 +219,12 @@ class EDGARConnect:
             you can try to do downloads outside of that time window. Recommended only if downloading a small number of
             filings.
 
+        remove_attachments: bool, default=false
+            Despite being .txt files, many SEC filings have files embedded, including PDFs, Excel spreadsheets, and
+            images. This can greatly increase the size of the filings. When True, a function is invoked to find and
+            delete sections of downloaded filings that correspond to the embedded attachments. Use this option to save
+            disk space when downloading a huge number of filings.
+
         RETURNS
         --------------------------
         None, see the EDGARConnect.__init__() docstring for an explanation of the directory structure created during
@@ -236,7 +242,8 @@ class EDGARConnect:
         required_files = [f'{(start_date + i).year}Q{(start_date + i).quarter}.txt' for i in range(n_quarters)]
 
         for i, file_path in enumerate(required_files):
-            print(f'Beginning scraping from {required_files[i]}')
+            date_str = required_files[i].split('.')[0]
+            print(f'Beginning scraping from {date_str}')
             self._time_check(ignore_time_guidelines)
 
             path = os.path.join(self.master_path, file_path)
@@ -249,22 +256,35 @@ class EDGARConnect:
                 form_mask = df.Form_type.str.lower() == form.lower()
                 new_filenames = df[form_mask].apply(self._create_new_filename, axis=1)
 
-                to_download = set(new_filenames.values)
-                downloaded = set(os.listdir(out_dir))
+                all_in_master = set(new_filenames.values)
+                all_local = set(os.listdir(out_dir))
 
-                download_targets = np.array(list(to_download - downloaded))
+                n_forms = len(all_in_master)
+
+                download_targets = np.array(list(all_in_master - all_local))
                 n_targets = len(download_targets)
 
                 if n_targets == 0:
-                    print(f'No {form} filings in {start_date + i} found, continuing...')
+                    if n_forms == 0:
+                        print(f'{date_str} {form:<10} No filings found on EDGAR, continuing...')
+                    else:
+                        print(f'{date_str} {form:<10} All filings downloaded, continuing...')
                 else:
                     target_mask = new_filenames.isin(download_targets)
                     rows_to_query = df.reindex(new_filenames.index)[target_mask]
 
-                    print(f'Found {n_targets} {form} filings, beginning download...')
-                    progress_bar = ProgressBar(verb='Downloading', total=n_targets, begin_on_newline=False)
+                    n_to_download = rows_to_query.shape[0]
+                    n_already_downloaded = n_forms - n_to_download
 
-                    for j, iterrow_tuple in enumerate(rows_to_query.iterrows()):
+                    print(f'{date_str} {form:<10} Found {n_already_downloaded} / {n_forms} locally, requesting '
+                          f'the remaining {n_to_download}...')
+                    progress_bar = ProgressBar(total=n_forms,
+                                               verb=f'{date_str} {form:<10}',
+                                               start_at=n_already_downloaded,
+                                               bar_length=40,
+                                               begin_on_newline=False)
+
+                    for iterrow_tuple in rows_to_query.iterrows():
                         idx, row = iterrow_tuple
                         new_filename = new_filenames[idx]
                         out_path = os.path.join(out_dir, new_filename)
@@ -284,9 +304,7 @@ class EDGARConnect:
                             self.strip_attachments_from_filing(out_path)
 
                         progress_bar.stop()
-                        iter_time = progress_bar.get_iters_per_sec()
-                        force_update = iter_time < 1 and (1 / iter_time) > 10
-                        self._update_user_agent(force_update=force_update)
+                        self._update_user_agent()
 
     def show_available_forms(self):
 
@@ -430,6 +448,9 @@ class EDGARConnect:
     def _create_output_directory(self, form_type):
         dirsafe_form = form_type.replace('/', '')
         out_dir = os.path.join(self.edgar_path, dirsafe_form)
+
+        if not os.path.isdir(out_dir):
+            os.mkdir(out_dir)
 
         return out_dir
 

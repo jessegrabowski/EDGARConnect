@@ -4,10 +4,10 @@ import numpy as np
 
 class ProgressBar:
 
-    def __init__(self, total, verb='', start_iters=0, bar_length=50, begin_on_newline=True):
+    def __init__(self, total, verb='', start_at=0, bar_length=50, begin_on_newline=True):
         self.total = total
         self.verb = verb
-        self.start_iters = start_iters
+        self.start_at = start_at
         self.bar_length = bar_length
 
         self.start_time = None
@@ -46,7 +46,7 @@ class ProgressBar:
 
     def print_progress(self):
         remaining = self.mean_time * (self.total - self.n_iters)
-        elapsed = time.time() - self.init_time
+        elapsed = time.time() - self.init_time + 1e-9
 
         remain_min, remain_sec = self._time_to_string(remaining)
         elapse_min, elapse_sec = self._time_to_string(elapsed)
@@ -56,7 +56,7 @@ class ProgressBar:
 
         n_digits = len(str(self.total))
 
-        total_iters = self.start_iters + self.n_iters
+        total_iters = self.start_at + self.n_iters
         pct_complete = int(total_iters / self.total * self.bar_length)
 
         bar = f'{self.verb} {total_iters:<{n_digits}} / {self.total} ['
@@ -70,7 +70,8 @@ class ProgressBar:
         else:
             time_info += f'{iter_per_sec:0.2f}iter/sec'
 
-        print(bar, time_info, end='\r')
+        complete = self.n_iters == self.total
+        print(bar, time_info, end='\n' if complete else '\r')
         self.last_print_time = time.time()
 
     def get_iters_per_sec(self):
