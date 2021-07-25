@@ -244,34 +244,45 @@ class EDGARConnect:
             df = df.drop_duplicates()
 
             for form in self.target_forms:
-                form_mask = df.Form_type.str.lower() == form.lower()
-                target_rows = df.index[form_mask]
-                n_iter = len(target_rows)
+                out_dir = self._create_output_directory(form)
 
-                if n_iter == 0:
+                form_mask = df.Form_type.str.lower() == form.lower()
+                new_filenames = df[form_mask].apply(self._create_new_filename, axis=1)
+
+                to_download = set(new_filenames.values)
+                downloaded = set(os.listdir(out_dir))
+
+                download_targets = np.array(list(to_download - downloaded))
+                n_targets = len(download_targets)
+
+                if n_targets == 0:
                     print(f'No {form} filings in {start_date + i} found, continuing...')
                 else:
-                    print(f'Found {n_iter} {form} filings, beginning download...')
-                    progress_bar = ProgressBar(verb='Downloading', total=n_iter)
+                    target_mask = new_filenames.isin(download_targets)
+                    rows_to_query = df.reindex(new_filenames.index)[target_mask]
 
-                    for j, idx in enumerate(target_rows):
-                        row = df.loc[idx, :]
-                        out_dir, out_path = self._create_output_directories(row)
+                    print(f'Found {n_targets} {form} filings, beginning download...')
+                    progress_bar = ProgressBar(verb='Downloading', total=n_targets, begin_on_newline=False)
 
-                        file_already_downloaded = self._check_file_dir_and_paths_exist(out_dir, out_path)
+                    for j, iterrow_tuple in enumerate(rows_to_query.iterrows()):
+                        idx, row = iterrow_tuple
+                        new_filename = new_filenames[idx]
+                        out_path = os.path.join(out_dir, new_filename)
+
                         progress_bar.start()
-                        if not file_already_downloaded:
-                            target_url = self.edgar_url + '/' + row['Filename']
-                            referer = target_url.replace('.txt', '-index.html')
-                            self.header['Referer'] = referer
 
-                            filing = self.http.get(target_url, headers=self.header)
+                        target_url = self.edgar_url + '/' + row['Filename']
+                        referer = target_url.replace('.txt', '-index.html')
+                        self.header['Referer'] = referer
 
-                            with open(out_path, 'w') as file:
-                                file.write(filing.content.decode('utf-8', 'ignore'))
+                        filing = self.http.get(target_url, headers=self.header)
 
-                            if remove_attachments:
-                                self.strip_attachments_from_filing(out_path)
+                        with open(out_path, 'w') as file:
+                            file.write(filing.content.decode('utf-8', 'ignore'))
+
+                        if remove_attachments:
+                            self.strip_attachments_from_filing(out_path)
+
                         progress_bar.stop()
                         iter_time = progress_bar.get_iters_per_sec()
                         force_update = iter_time < 1 and (1 / iter_time) > 10
@@ -392,24 +403,35 @@ class EDGARConnect:
                     file.write(line)
                     file.write('\n')
 
-    def _create_output_directories(self, row):
+    @staticmethod
+    def _get_date_from_row(row):
+        date = pd.to_datetime(row['Date_filed']).to_period('Q')
+        date_str = str(date)
+
+        return date_str
+
+    @staticmethod
+    def _get_cik_from_row(row):
         cik = row['CIK']
         zeros = '0' * (10 - len(str(cik)))
         cik_str = zeros + str(cik)
 
-        dirsafe_form = row['Form_type'].replace('/', '')
+        return cik_str
 
-        date = pd.to_datetime(row['Date_filed']).to_period('Q')
-        date_str = str(date)
-
+    def _create_new_filename(self, row):
+        cik_str = self._get_cik_from_row(row)
+        date_str = self._get_date_from_row(row)
         filename = row['Filename'].split('/')[-1]
 
-        new_fname = f'{cik_str}_{date_str}_{filename}'
+        new_filename = f'{cik_str}_{date_str}_{filename}'
 
+        return new_filename
+
+    def _create_output_directory(self, form_type):
+        dirsafe_form = form_type.replace('/', '')
         out_dir = os.path.join(self.edgar_path, dirsafe_form)
-        out_path = os.path.join(out_dir, new_fname)
 
-        return out_dir, out_path
+        return out_dir
 
     @staticmethod
     def get_next_document_chunk(text, last_end_idx=0):
@@ -422,9 +444,15 @@ class EDGARConnect:
         start_idx = 0
         doc_counter = 0
         results = {}
-
-        with open(filing_path, 'r', encoding='utf-8') as file:
-            text = file.read()
+        try:
+            with open(filing_path, 'r', encoding='utf-8') as file:
+                text = file.read()
+        except UnicodeDecodeError:
+            try:
+                with open(filing_path, 'r') as file:
+                    text = file.read()
+            except:
+                return
 
         while True:
             doc_slice = self.get_next_document_chunk(text, start_idx)
