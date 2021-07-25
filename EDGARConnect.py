@@ -9,18 +9,20 @@ import numpy as np
 
 from zipfile import ZipFile
 from io import BytesIO
+import re
 
 import pytz
 from collections import Counter
 from EDGARConnectExceptions import SECServerClosedError
-from utilities import progress_bar
 from fake_useragent import UserAgent
+
+from ProgressBar import ProgressBar
 
 
 class EDGARConnect:
 
     def __init__(self, edgar_path, user_agent=None, edgar_url='https://www.sec.gov/Archives', retry_kwargs=None,
-                 header=None):
+                 header=None, update_user_agent_interval=360):
         """
         A class for downloading SEC filings from the EDGAR database.
 
@@ -69,12 +71,7 @@ class EDGARConnect:
             |   ...
             +---{form_name}
             |   |
-            |   +---{Company_CIK}
-            |   |   |
-            |   |   +---{year}{quarter}
-            |   |   |   |
-            |   |   |   +---{report_file_name}.txt
-            |   |   |
+            |   +---{Company_CIK}_{form_name}_{filing_date}_{file_name}.txt
 
         master_indexes is a collection of pipe-delimited ("|") tables with the following 5 columns:
             CIK, Company_Name, Form_type, Date_filed , Filename.
@@ -94,19 +91,18 @@ class EDGARConnect:
                                 allowed_methods=["HEAD", "GET", "OPTIONS"])
 
         self.edgar_url = edgar_url
+        self.user_agent = UserAgent()
 
-        if user_agent is None:
-            ua = UserAgent()
-            user_agent = ua.random
+        if header is None:
+            header = {'User-Agent': self.user_agent.random,
+                      'Accept-Encoding': 'gzip, deflate, br',
+                      'Accept-Language': 'en-us',
+                      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                      'Host': "www.sec.gov"}
 
-        if header is not None:
-            self.header = header
-        else:
-            self.header = {'User-Agent': user_agent,
-                           'Accept-Encoding': 'gzip, deflate, br',
-                           'Accept-Language': 'en-us',
-                           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                           'Host': "www.sec.gov"}
+        self.header = header
+        self.last_user_agent_change = time.time()
+        self.update_user_agent_interval = update_user_agent_interval
 
         retry_strategy = Retry(**retry_kwargs)
         self.adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -159,21 +155,16 @@ class EDGARConnect:
 
         update_quarters = [end_date - i for i in range(update_range)]
 
-        mean_time = 0
-
+        progress_bar = ProgressBar(verb='Downloading', total=n_quarters)
         for i in range(n_quarters):
-            start = time.time()
+            progress_bar.start()
 
             next_date = start_date + i
             force_redownload = update_all or (next_date in update_quarters)
 
             self._update_master_index(next_date, force_redownload)
 
-            elapsed = time.time() - start
-            alpha = 1 / (i + 1)
-            mean_time = alpha * elapsed + (1 - alpha) * mean_time
-            progress_bar(i, n_quarters, mean_time, f'Downloading {i} / {n_quarters} Master Lists')
-        progress_bar(n_quarters, n_quarters, mean_time, f'Downloading {n_quarters} / {n_quarters} Master Lists')
+            progress_bar.stop()
 
     def configure_downloader(self, target_forms, start_date='01-01-1994', end_date=None):
         """
@@ -204,6 +195,8 @@ class EDGARConnect:
                 target_forms = self.forms[target_forms.lower()]
             elif target_forms.lower() in ['10k', 'all', 'everything']:
                 target_forms = self.forms['f_10x']
+            else:
+                target_forms = [target_forms]
 
         self.target_forms = target_forms
         self.start_date = pd.to_datetime(start_date).to_period('Q')
@@ -213,7 +206,7 @@ class EDGARConnect:
         self.end_date = pd.to_datetime(end_date).to_period('Q')
         self._configured = True
 
-    def download_requested_filings(self, ignore_time_guidelines=False):
+    def download_requested_filings(self, ignore_time_guidelines=False, remove_attachments=False):
         """
         Method for downloading all forums meeting the requirements set in the configure_downloader() method. That method
         must be run before running this one.
@@ -242,8 +235,6 @@ class EDGARConnect:
         print(f'Gathering URLS for the requested forms...')
         required_files = [f'{(start_date + i).year}Q{(start_date + i).quarter}.txt' for i in range(n_quarters)]
 
-        mean_time = 0
-
         for i, file_path in enumerate(required_files):
             print(f'Beginning scraping from {required_files[i]}')
             self._time_check(ignore_time_guidelines)
@@ -256,39 +247,35 @@ class EDGARConnect:
                 form_mask = df.Form_type.str.lower() == form.lower()
                 target_rows = df.index[form_mask]
                 n_iter = len(target_rows)
-                changes_made = False
 
                 if n_iter == 0:
                     print(f'No {form} filings in {start_date + i} found, continuing...')
                 else:
                     print(f'Found {n_iter} {form} filings, beginning download...')
+                    progress_bar = ProgressBar(verb='Downloading', total=n_iter)
 
-                for j, idx in enumerate(target_rows):
-                    row = df.loc[idx, :]
-                    out_dir, out_path = self._create_output_directories(row)
+                    for j, idx in enumerate(target_rows):
+                        row = df.loc[idx, :]
+                        out_dir, out_path = self._create_output_directories(row)
 
-                    file_already_downloaded = self._check_file_dir_and_paths_exist(out_dir, out_path)
+                        file_already_downloaded = self._check_file_dir_and_paths_exist(out_dir, out_path)
+                        progress_bar.start()
+                        if not file_already_downloaded:
+                            target_url = self.edgar_url + '/' + row['Filename']
+                            referer = target_url.replace('.txt', '-index.html')
+                            self.header['Referer'] = referer
 
-                    if not file_already_downloaded:
-                        changes_made = True
-                        start_time = time.time()
+                            filing = self.http.get(target_url, headers=self.header)
 
-                        target_url = self.edgar_url + '/' + row['Filename']
-                        referer = target_url.replace('.txt', '-index.html')
-                        self.header['Referer'] = referer
+                            with open(out_path, 'w') as file:
+                                file.write(filing.content.decode('utf-8', 'ignore'))
 
-                        filing = self.http.get(target_url, headers=self.header)
-
-                        with open(out_path, 'w') as file:
-                            file.write(filing.content.decode('utf-8', 'ignore'))
-
-                        elapsed = time.time() - start_time
-                        alpha = 1 / (j + 1)
-                        mean_time = alpha * elapsed + (1 - alpha) * mean_time
-                        progress_bar(j, n_iter, mean_time, f'Downloading {start_date + i} {form} {j} / {n_iter}')
-                if changes_made:
-                    progress_bar(n_iter, n_iter, mean_time, f'Downloading {start_date + i} {form} {n_iter} / {n_iter}')
-                print('')
+                            if remove_attachments:
+                                self.strip_attachments_from_filing(out_path)
+                        progress_bar.stop()
+                        iter_time = progress_bar.get_iters_per_sec()
+                        force_update = iter_time < 1 and (1 / iter_time) > 10
+                        self._update_user_agent(force_update=force_update)
 
     def show_available_forms(self):
 
@@ -329,6 +316,13 @@ class EDGARConnect:
 
         print(f'Estimated download time, assuming 1s per file: {d} Days, {h} hours, {m} minutes, {s} seconds')
         print(f'Estimated drive space, assuming 150KB per filing: {form_sum * 150 * 1e-6:0.2f}GB')
+
+    def _update_user_agent(self, force_update=False):
+        time_to_update = (time.time() - self.last_user_agent_change) < self.update_user_agent_interval
+
+        if time_to_update or force_update:
+            self.header['User-Agent'] = self.user_agent.random
+            self.last_user_agent_change = time.time()
 
     def _check_config(self):
         if not self._configured:
@@ -410,10 +404,46 @@ class EDGARConnect:
 
         filename = row['Filename'].split('/')[-1]
 
-        out_dir = os.path.join(self.edgar_path, dirsafe_form, cik_str, date_str)
-        out_path = os.path.join(out_dir, filename)
+        new_fname = f'{cik_str}_{date_str}_{filename}'
+
+        out_dir = os.path.join(self.edgar_path, dirsafe_form)
+        out_path = os.path.join(out_dir, new_fname)
 
         return out_dir, out_path
+
+    @staticmethod
+    def get_next_document_chunk(text, last_end_idx=0):
+        doc_start_idx = text.find('<DOCUMENT>', last_end_idx, )
+        doc_end_idx = text.find(r'</DOCUMENT>', doc_start_idx) + len('</DOCUMENT>')
+
+        return slice(doc_start_idx, doc_end_idx)
+
+    def strip_attachments_from_filing(self, filing_path):
+        start_idx = 0
+        doc_counter = 0
+        results = {}
+
+        with open(filing_path, 'r', encoding='utf-8') as file:
+            text = file.read()
+
+        while True:
+            doc_slice = self.get_next_document_chunk(text, start_idx)
+            doc = text[doc_slice]
+            is_img = re.search('<FILENAME>.+\.(gif|jpg|jpeg|bmp|png|pdf|xls|xlsx|zip)', doc[:1000]) is not None
+            results[doc_counter] = {'slice': doc_slice, 'is_img': is_img}
+
+            start_idx = doc_slice.stop
+            doc_counter += 1
+            if doc_slice.start == -1:
+                break
+
+        with open(filing_path, 'w', encoding='utf-8') as file:
+            for i in range(len(results)):
+                result = results[i]
+                if not result['is_img']:
+                    doc_slice = result['slice']
+                    doc = text[doc_slice]
+                    file.write(doc)
 
     @staticmethod
     def _check_file_dir_and_paths_exist(out_dir, out_path):
